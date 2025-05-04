@@ -123,4 +123,16 @@ public class EventBusTest {
         assertEquals(List.of("HIGHEST", "HIGH", "NORMAL", "LOW", "LOWEST"), callOrder,
                 "Handlers should be called in order of their priority from highest to lowest");
     }
+
+    @Test
+    public void testUtilMethods() {
+        TestSubscriber subscriber = new TestSubscriber();
+
+        bus.register(subscriber);
+        assertEquals(bus.hasListeners(TestEvent.class), true);
+
+        bus.unregister(subscriber);
+        assertEquals(bus.hasListeners(TestEvent.class), false);
+        assertEquals(List.of(), bus.getListeners(TestEvent.class));
+    }
 }
