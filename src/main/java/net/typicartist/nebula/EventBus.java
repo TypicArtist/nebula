@@ -13,7 +13,6 @@ public class EventBus implements IEventBus {
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
     private final Map<Class<?>, Set<EventHandler>> eventHandlers = new ConcurrentHashMap<>();
-    private final Set<IEventInterceptor> interceptors = ConcurrentHashMap.newKeySet();
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public <T> Future<?> postAsync(T event) {
@@ -86,11 +85,7 @@ public class EventBus implements IEventBus {
             }
         }
     }
-
-    public void addInterceptor(IEventInterceptor interceptor) {
-        interceptors.add(interceptor);
-    }
-
+    
     public void unregister(Object subscriber) {
         for (Set<EventHandler> handlers : eventHandlers.values()) {
             Iterator<EventHandler> iterator = handlers.iterator();
