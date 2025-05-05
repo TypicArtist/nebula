@@ -85,7 +85,7 @@ public class EventBus implements IEventBus {
             }
         }
     }
-    
+
     public void unregister(Object subscriber) {
         for (Set<EventHandler> handlers : eventHandlers.values()) {
             Iterator<EventHandler> iterator = handlers.iterator();
