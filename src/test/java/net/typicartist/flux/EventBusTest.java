@@ -61,7 +61,7 @@ public class EventBusTest {
         public String receivedMessage;
 
         @Subscriber(priority = EventPriority.HIGHEST)
-        void onHighPriorityEvent(TestEvent event) {
+        public void onHighPriorityEvent(TestEvent event) {
             this.receivedMessage = event.getMessage();
         }
     }
@@ -134,10 +134,10 @@ public class EventBusTest {
         TestSubscriber subscriber = new TestSubscriber();
 
         bus.register(subscriber);
-        assertEquals(bus.hasListeners(TestEvent.class), true);
+        assertEquals(true, bus.hasSubscribers(TestEvent.class));
 
         bus.unregister(subscriber);
-        assertEquals(bus.hasListeners(TestEvent.class), false);
-        assertEquals(List.of(), bus.getListeners(TestEvent.class));
+        assertEquals(false, bus.hasSubscribers(TestEvent.class));
+        assertEquals(List.of(), bus.getSubscribers(TestEvent.class));
     }
 }

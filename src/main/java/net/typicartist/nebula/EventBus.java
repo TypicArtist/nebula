@@ -12,11 +12,17 @@ import java.util.concurrent.Future;
 public class EventBus implements IEventBus {
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
-    private final Map<Class<?>, Set<EventHandler>> eventHandlers = new ConcurrentHashMap<>();
+    private final Map<Class<?>, Set<IEventHandler>> eventHandlers = new ConcurrentHashMap<>();
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     public <T> Future<?> postAsync(T event) {
         return executor.submit(() -> post(event));
+    }
+
+    public <T> void postBatch(List<T> events) {
+        for (T event : events) {
+            post(event);
+        }
     }
 
     public <T> void post(T event) {
@@ -33,20 +39,20 @@ public class EventBus implements IEventBus {
         }
 
         for (Class<?> eventType : eventClasses) {
-            Set<EventHandler> handlers = eventHandlers.get(eventType);
-            if (handlers != null) {
-                PriorityQueue<EventHandler> queue = new PriorityQueue<>(
-                    Comparator.comparingInt(handler -> -handler.priority)
+            Set<IEventHandler> handlers = eventHandlers.get(eventType);
+            if (hasSubscribers(eventType)) {
+                PriorityQueue<IEventHandler> queue = new PriorityQueue<>(
+                    Comparator.comparingInt(handler -> -handler.getPriority())
                 );
 
-                for (EventHandler handler : handlers) {
+                for (IEventHandler handler : handlers) {
                     if (handler.isActive()) {
                         queue.add(handler);
                     }
                 }
 
                 while (!queue.isEmpty()) {
-                    EventHandler handler = queue.poll();
+                    IEventHandler handler = queue.poll();
                     handler.invoke(event);
 
                     if (event instanceof ICancellable cancellable && cancellable.isCancelled()) {
@@ -60,7 +66,7 @@ public class EventBus implements IEventBus {
     public <T> void register(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
         eventHandlers
             .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
-            .add(new EventHandler(consumer, priority.getValue()));
+            .add(new EventHandlerImpl(consumer, priority.getValue()));
     }
 
     public void register(Object subscriber) {
@@ -78,7 +84,7 @@ public class EventBus implements IEventBus {
                     MethodHandle handle = LOOKUP.unreflect(method);
                     eventHandlers
                         .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
-                        .add(new EventHandler(subscriber, handle, annotation.priority().getValue()));
+                        .add(new EventHandlerImpl(subscriber, handle, annotation.priority().getValue()));
                 } catch (IllegalAccessException e) {
                     e.printStackTrace();
                 }
@@ -87,10 +93,10 @@ public class EventBus implements IEventBus {
     }
 
     public void unregister(Object subscriber) {
-        for (Set<EventHandler> handlers : eventHandlers.values()) {
-            Iterator<EventHandler> iterator = handlers.iterator();
+        for (Set<IEventHandler> handlers : eventHandlers.values()) {
+            Iterator<IEventHandler> iterator = handlers.iterator();
             while (iterator.hasNext()) {
-                EventHandler handler = iterator.next();
+                IEventHandler handler = iterator.next();
                 if (handler.getSubscriber() == subscriber) {
                     iterator.remove();
                 }
@@ -107,8 +113,8 @@ public class EventBus implements IEventBus {
     }
 
     private void setActive(Object subscriber, boolean active) {
-        for (Set<EventHandler> handlers : eventHandlers.values()) {
-            for (EventHandler handler : handlers) {
+        for (Set<IEventHandler> handlers : eventHandlers.values()) {
+            for (IEventHandler handler : handlers) {
                 if (handler.getSubscriber() == subscriber) {
                     handler.setActive(active);
                 }
@@ -116,21 +122,27 @@ public class EventBus implements IEventBus {
         }
     }
 
-    public <T> boolean hasListeners(Class<T> eventType) {
-        Set<EventHandler> handlers = eventHandlers.get(eventType);
+    public <T> boolean hasSubscribers(Class<T> eventType) {
+        Set<IEventHandler> handlers = eventHandlers.get(eventType);
 
         return handlers != null && !handlers.isEmpty();
     }
 
-    public <T> List<Object> getListeners(Class<T> eventType) {
+    public <T> int countSubscribers(Class<T> eventType) {
+        Set<IEventHandler> handlers = eventHandlers.get(eventType);
+
+        return hasSubscribers(eventType) ? handlers.size() : 0;
+    }
+
+    public <T> List<Object> getSubscribers(Class<T> eventType) {
         List<Object> result = new ArrayList<>();
 
-        Set<EventHandler> handlers = eventHandlers.get(eventType);
+        Set<IEventHandler> handlers = eventHandlers.get(eventType);
 
-        if (handlers != null) {
-            for (EventHandler handler : handlers) {
+        if (hasSubscribers(eventType)) {
+            for (IEventHandler handler : handlers) {
                 if (handler.isActive()) {
-                    result.add(handler);
+                    result.add(handler.getSubscriber());
                 }
             }
         };
@@ -142,14 +154,25 @@ public class EventBus implements IEventBus {
         executor.shutdown();
     }
 
-    private class EventHandler {
+    private class EventInterceptorImp implements IInterceptorChain {
+        public <T> void process(T event) {
+
+        }   
+
+
+        public <T> void dispatch(T event) {
+
+        }
+    }
+
+    private class EventHandlerImpl implements IEventHandler {
         private final Object subscriber;
         private final MethodHandle handle;
         private final IEventConsumer<Object> consumer;
         private final int priority;
         private boolean active = true;
 
-        public EventHandler(Object subscriber, MethodHandle handle, int priority) {
+        public EventHandlerImpl(Object subscriber, MethodHandle handle, int priority) {
             this.subscriber = subscriber;
             this.handle = handle;
             this.consumer = null;
@@ -157,7 +180,7 @@ public class EventBus implements IEventBus {
         }
 
         @SuppressWarnings("unchecked")
-        public EventHandler(IEventConsumer<?> consumer, int priority) {
+        public EventHandlerImpl(IEventConsumer<?> consumer, int priority) {
             this.subscriber = consumer;
             this.handle = null;
             this.consumer = (IEventConsumer<Object>) consumer;
@@ -166,6 +189,10 @@ public class EventBus implements IEventBus {
 
         public Object getSubscriber() {
             return subscriber;
+        }
+
+        public int getPriority() {
+            return priority;
         }
 
         public boolean isActive() {
