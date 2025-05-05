@@ -1,14 +1,24 @@
-package net.typicartist.flux;
+package net.typicartist.nebula;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 public class EventBus implements IEventBus {
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
+
     private final Map<Class<?>, Set<EventHandler>> eventHandlers = new ConcurrentHashMap<>();
+    private final Set<IEventInterceptor> interceptors = ConcurrentHashMap.newKeySet();
+    private final ExecutorService executor = Executors.newCachedThreadPool();
+
+    public <T> Future<?> postAsync(T event) {
+        return executor.submit(() -> post(event));
+    }
 
     public <T> void post(T event) {
         Set<Class<?>> eventClasses = new HashSet<>();
@@ -48,7 +58,7 @@ public class EventBus implements IEventBus {
         }
     }
 
-    public <T> void register(Class<T> eventType, EventConsumer<T> consumer, EventPriority priority) {
+    public <T> void register(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
         eventHandlers
             .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
             .add(new EventHandler(consumer, priority.getValue()));
@@ -75,6 +85,10 @@ public class EventBus implements IEventBus {
                 }
             }
         }
+    }
+
+    public void addInterceptor(IEventInterceptor interceptor) {
+        interceptors.add(interceptor);
     }
 
     public void unregister(Object subscriber) {
@@ -107,13 +121,13 @@ public class EventBus implements IEventBus {
         }
     }
 
-    public boolean hasListeners(Object eventType) {
+    public <T> boolean hasListeners(Class<T> eventType) {
         Set<EventHandler> handlers = eventHandlers.get(eventType);
 
         return handlers != null && !handlers.isEmpty();
     }
 
-    public List<Object> getListeners(Object eventType) {
+    public <T> List<Object> getListeners(Class<T> eventType) {
         List<Object> result = new ArrayList<>();
 
         Set<EventHandler> handlers = eventHandlers.get(eventType);
@@ -129,14 +143,14 @@ public class EventBus implements IEventBus {
         return result;
     }
 
-    public interface EventConsumer<T> {
-        void accept(T event);
-    }    
+    public void shutdown() {
+        executor.shutdown();
+    }
 
     private class EventHandler {
         private final Object subscriber;
         private final MethodHandle handle;
-        private final EventConsumer<Object> consumer;
+        private final IEventConsumer<Object> consumer;
         private final int priority;
         private boolean active = true;
 
@@ -148,10 +162,10 @@ public class EventBus implements IEventBus {
         }
 
         @SuppressWarnings("unchecked")
-        public EventHandler(EventConsumer<?> consumer, int priority) {
+        public EventHandler(IEventConsumer<?> consumer, int priority) {
             this.subscriber = consumer;
             this.handle = null;
-            this.consumer = (EventConsumer<Object>) consumer;
+            this.consumer = (IEventConsumer<Object>) consumer;
             this.priority = priority;
         }
 

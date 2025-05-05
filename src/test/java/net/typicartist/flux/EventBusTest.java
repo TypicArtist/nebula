@@ -3,6 +3,11 @@ package net.typicartist.flux;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import net.typicartist.nebula.EventBus;
+import net.typicartist.nebula.EventPriority;
+import net.typicartist.nebula.ICancellable;
+import net.typicartist.nebula.Subscriber;
+
 import java.util.ArrayList;
 import java.util.List;
 

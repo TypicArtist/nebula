@@ -1,4 +1,4 @@
-package net.typicartist.flux;
+package net.typicartist.nebula;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
