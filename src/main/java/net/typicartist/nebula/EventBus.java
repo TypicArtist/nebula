@@ -5,15 +5,28 @@ import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class EventBus implements IEventBus {
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
     private final Map<Class<?>, Set<IEventHandler>> eventHandlers = new ConcurrentHashMap<>();
+    private final List<IEventInterceptor> interceptors = new CopyOnWriteArrayList<>();
     private final ExecutorService executor = Executors.newCachedThreadPool();
+
+    public EventBus() {
+        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown));
+    }
+
+    public <T> void schedule(T event, long delay, TimeUnit timeUnit) {
+        Executors.newSingleThreadScheduledExecutor()
+            .schedule(() -> post(event), delay, timeUnit);
+    }
 
     public <T> Future<?> postAsync(T event) {
         return executor.submit(() -> post(event));
@@ -26,39 +39,17 @@ public class EventBus implements IEventBus {
     }
 
     public <T> void post(T event) {
-        Set<Class<?>> eventClasses = new HashSet<>();
-        Class<?> eventClass = event.getClass();
-
-        while (eventClass != Object.class) {
-            eventClasses.add(eventClass);
-            eventClass = eventClass.getSuperclass();
-        }
-
-        if (eventClass != null) {
-            Collections.addAll(eventClasses, eventClass.getInterfaces());
-        }
-
-        for (Class<?> eventType : eventClasses) {
-            Set<IEventHandler> handlers = eventHandlers.get(eventType);
-            if (hasSubscribers(eventType)) {
-                PriorityQueue<IEventHandler> queue = new PriorityQueue<>(
-                    Comparator.comparingInt(handler -> -handler.getPriority())
-                );
-
-                for (IEventHandler handler : handlers) {
-                    if (handler.isActive()) {
-                        queue.add(handler);
-                    }
-                }
-
-                while (!queue.isEmpty()) {
-                    IEventHandler handler = queue.poll();
-                    handler.invoke(event);
-
-                    if (event instanceof ICancellable cancellable && cancellable.isCancelled()) {
-                        break;
-                    }
-                }
+        IInterceptorChain chain = new InterceptorChainImpl(interceptors.iterator());
+        
+        try {
+            chain.process(event);
+        } catch (Throwable throwable) {
+            for (IEventInterceptor interceptor : interceptors) {
+                try {
+                    interceptor.onError(event, throwable);
+                } catch (Throwable ignored) {
+                    ignored.printStackTrace();
+                };
             }
         }
     }
@@ -122,15 +113,21 @@ public class EventBus implements IEventBus {
         }
     }
 
+    public void addInterceptor(IEventInterceptor interceptor) {
+        interceptors.add(Objects.requireNonNull(interceptor, "interceptor must not be null"));
+    }
+
+    public void removeInterceptor(IEventInterceptor interceptor) {
+        interceptors.remove(Objects.requireNonNull(interceptor, "interceptor must not be null"));
+    }
+
     public <T> boolean hasSubscribers(Class<T> eventType) {
         Set<IEventHandler> handlers = eventHandlers.get(eventType);
-
         return handlers != null && !handlers.isEmpty();
     }
 
     public <T> int countSubscribers(Class<T> eventType) {
         Set<IEventHandler> handlers = eventHandlers.get(eventType);
-
         return hasSubscribers(eventType) ? handlers.size() : 0;
     }
 
@@ -154,14 +151,59 @@ public class EventBus implements IEventBus {
         executor.shutdown();
     }
 
-    private class EventInterceptorImp implements IInterceptorChain {
-        public <T> void process(T event) {
+    private class InterceptorChainImpl implements IInterceptorChain {
+        private final Iterator<IEventInterceptor> iterator;
 
+        public <T> InterceptorChainImpl(Iterator<IEventInterceptor> iterator) {
+            this.iterator = iterator;
+        }
+
+        public <T> void process(T event) {
+            if (iterator.hasNext()) {
+                IEventInterceptor next = iterator.next();
+                next.intercept(event, this);
+            } else {
+                postToHandlers(event);
+            }
         }   
 
 
-        public <T> void dispatch(T event) {
+        public <T> void postToHandlers(T event) {
+            Set<Class<?>> eventClasses = new HashSet<>();
+            Class<?> eventClass = event.getClass();
 
+            while (eventClass != Object.class) {
+                eventClasses.add(eventClass);
+                eventClass = eventClass.getSuperclass();
+            }
+
+            if (eventClass != null) {
+                Collections.addAll(eventClasses, eventClass.getInterfaces());
+            }
+
+            for (Class<?> eventType : eventClasses) {
+                Set<IEventHandler> handlers = eventHandlers.get(eventType);
+                if (hasSubscribers(eventType)) {
+                    PriorityQueue<IEventHandler> queue = new PriorityQueue<>(
+                        Comparator.comparingInt(handler -> -handler.getPriority())
+                    );
+
+                    for (IEventHandler handler : handlers) {
+                        if (handler.isActive()) {
+                            queue.add(handler);
+                        }
+                    }
+
+                    while (!queue.isEmpty()) {
+                        IEventHandler handler = queue.poll();
+                        handler.invoke(event);
+
+                        if (event instanceof ICancellable cancellable && cancellable.isCancelled()) {
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -211,7 +253,7 @@ public class EventBus implements IEventBus {
                     handle.bindTo(subscriber).invoke(event);
                 }
             } catch (Throwable throwable) {
-                throwable.printStackTrace();;
+                throw new RuntimeException("Error while invoking event handler", throwable);
             }
         } 
     }

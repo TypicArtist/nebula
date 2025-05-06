@@ -1,15 +1,11 @@
-package net.typicartist.flux;
+package net.typicartist.nebula;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import net.typicartist.nebula.EventBus;
-import net.typicartist.nebula.EventPriority;
-import net.typicartist.nebula.ICancellable;
-import net.typicartist.nebula.Subscriber;
-
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -63,6 +59,20 @@ public class EventBusTest {
         @Subscriber(priority = EventPriority.HIGHEST)
         public void onHighPriorityEvent(TestEvent event) {
             this.receivedMessage = event.getMessage();
+        }
+    }
+
+    public static class TestInterceptor implements IEventInterceptor {
+        public List<String> log = new ArrayList<>();
+
+        public <T> void intercept(T event, IInterceptorChain chain) {
+            log.add("before");
+            chain.process(event);
+            log.add("after");
+        }
+
+        public <T> void onError(T event, Throwable throwable) {
+            log.add("error");
         }
     }
 
@@ -140,4 +150,33 @@ public class EventBusTest {
         assertEquals(false, bus.hasSubscribers(TestEvent.class));
         assertEquals(List.of(), bus.getSubscribers(TestEvent.class));
     }
+
+    @Test
+    void testInterceptorOrder() {
+        TestInterceptor interceptor = new TestInterceptor();
+        bus.addInterceptor(interceptor);
+
+        AtomicBoolean called = new AtomicBoolean(false);
+        bus.register(TestEvent.class, event -> called.set(true), EventPriority.NORMAL);
+
+        bus.post(new TestEvent("interceptor order test"));
+
+        assertEquals(true, called.get());
+        assertEquals(2, interceptor.log.size());
+        assertEquals("before", interceptor.log.get(0));
+        assertEquals("after", interceptor.log.get(1));
+    }
+
+    @Test
+    void testInterceptorError() {
+        TestInterceptor interceptor = new TestInterceptor();
+        bus.addInterceptor(interceptor);
+
+        bus.register(TestEvent.class, event -> { throw new RuntimeException("fail"); }, EventPriority.NORMAL);
+
+        bus.post(new TestEvent("interceptor error test"));
+
+        assertEquals(true, interceptor.log.contains("error"));
+    }
+
 }
