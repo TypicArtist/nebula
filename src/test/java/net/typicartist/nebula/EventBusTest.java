@@ -179,4 +179,13 @@ public class EventBusTest {
         assertEquals(true, interceptor.log.contains("error"));
     }
 
+    @Test
+    void testOnceSubscriber() {
+        bus.registerOnce(TestEvent.class, e -> {}, EventPriority.NORMAL);
+
+        assertEquals(true, bus.hasSubscribers(TestEvent.class));
+        bus.post(new TestEvent("once event handle"));
+
+        assertEquals(false, bus.hasSubscribers(TestEvent.class));
+    }
 }

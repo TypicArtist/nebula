@@ -9,4 +9,5 @@ import java.lang.annotation.Target;
 @Retention(value = RetentionPolicy.RUNTIME)
 public @interface Subscriber {
     EventPriority priority() default EventPriority.NORMAL;
+    boolean once() default false;
 }

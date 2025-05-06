@@ -3,14 +3,21 @@ package net.typicartist.nebula;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Method;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.PriorityQueue;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 public class EventBus implements IEventBus {
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
@@ -21,11 +28,6 @@ public class EventBus implements IEventBus {
 
     public EventBus() {
         Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown));
-    }
-
-    public <T> void schedule(T event, long delay, TimeUnit timeUnit) {
-        Executors.newSingleThreadScheduledExecutor()
-            .schedule(() -> post(event), delay, timeUnit);
     }
 
     public <T> Future<?> postAsync(T event) {
@@ -54,6 +56,17 @@ public class EventBus implements IEventBus {
         }
     }
 
+    public <T> void registerOnce(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
+        IEventConsumer<T> onceWrapper = new IEventConsumer<>() {
+            @Override
+            public void accept(T event) {
+                consumer.accept(event);
+                unregister(this);
+            }
+        };
+        register(eventType, onceWrapper, priority);
+    }
+
     public <T> void register(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
         eventHandlers
             .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
@@ -71,11 +84,25 @@ public class EventBus implements IEventBus {
                 Subscriber annotation = method.getAnnotation(Subscriber.class);
                 Class<?> eventType = method.getParameterTypes()[0];
 
+                EventPriority priority = annotation.priority();
+
                 try {
                     MethodHandle handle = LOOKUP.unreflect(method);
+
+                    IEventConsumer<Object> consumer = new IEventConsumer<>() {
+                        @Override
+                        public void accept(Object event) {
+                            try {
+                                handle.bindTo(subscriber).invoke(event);
+                            } catch (Throwable throwable) {
+                                throw new RuntimeException("Error while invoking event handler", throwable);
+                            }
+                        }    
+                    };
+
                     eventHandlers
                         .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
-                        .add(new EventHandlerImpl(subscriber, handle, annotation.priority().getValue()));
+                        .add(new EventHandlerImpl(subscriber, handle, priority.getValue()));
                 } catch (IllegalAccessException e) {
                     e.printStackTrace();
                 }
