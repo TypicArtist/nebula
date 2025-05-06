@@ -49,9 +49,7 @@ public class EventBus implements IEventBus {
             for (IEventInterceptor interceptor : interceptors) {
                 try {
                     interceptor.onError(event, throwable);
-                } catch (Throwable ignored) {
-                    ignored.printStackTrace();
-                };
+                } catch (Throwable ignored) {};
             }
         }
     }
@@ -88,17 +86,6 @@ public class EventBus implements IEventBus {
 
                 try {
                     MethodHandle handle = LOOKUP.unreflect(method);
-
-                    IEventConsumer<Object> consumer = new IEventConsumer<>() {
-                        @Override
-                        public void accept(Object event) {
-                            try {
-                                handle.bindTo(subscriber).invoke(event);
-                            } catch (Throwable throwable) {
-                                throw new RuntimeException("Error while invoking event handler", throwable);
-                            }
-                        }    
-                    };
 
                     eventHandlers
                         .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
