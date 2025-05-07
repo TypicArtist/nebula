@@ -76,6 +76,15 @@ public class EventBusTest {
         }
     }
 
+    public static class TestOnceSubscriber {
+        public String receivedMessage;
+
+        @Subscriber(priority = EventPriority.HIGHEST, once = true)
+        public void onHighPriorityEvent(TestEvent event) {
+            this.receivedMessage = event.getMessage();
+        }
+    }
+
     @Test
     public void testSubscriberReceivesEvent() {
         TestSubscriber subscriber = new TestSubscriber();
@@ -180,7 +189,7 @@ public class EventBusTest {
     }
 
     @Test
-    void testOnceSubscriber() {
+    void testOnceConsumer() {
         bus.registerOnce(TestEvent.class, e -> {}, EventPriority.NORMAL);
 
         assertEquals(true, bus.hasSubscribers(TestEvent.class));
@@ -188,4 +197,15 @@ public class EventBusTest {
 
         assertEquals(false, bus.hasSubscribers(TestEvent.class));
     }
-}
+
+    @Test
+    void testOnceSubscriber() {
+        TestOnceSubscriber subscriber = new TestOnceSubscriber();
+        bus.register(subscriber);
+
+        TestEvent event = new TestEvent("hello!");
+        bus.post(event);
+
+        assertEquals(false, bus.hasSubscribers(TestEvent.class));
+    }
+} 

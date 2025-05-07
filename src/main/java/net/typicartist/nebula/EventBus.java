@@ -54,21 +54,8 @@ public class EventBus implements IEventBus {
         }
     }
 
-    public <T> void registerOnce(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
-        IEventConsumer<T> onceWrapper = new IEventConsumer<>() {
-            @Override
-            public void accept(T event) {
-                consumer.accept(event);
-                unregister(this);
-            }
-        };
-        register(eventType, onceWrapper, priority);
-    }
-
     public <T> void register(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
-        eventHandlers
-            .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
-            .add(new EventHandlerImpl(consumer, priority.getValue()));
+        register(eventType, consumer, consumer, priority);
     }
 
     public void register(Object subscriber) {
@@ -81,20 +68,57 @@ public class EventBus implements IEventBus {
 
                 Subscriber annotation = method.getAnnotation(Subscriber.class);
                 Class<?> eventType = method.getParameterTypes()[0];
-
                 EventPriority priority = annotation.priority();
+                boolean once = annotation.once();
+
+                method.setAccessible(true);
 
                 try {
                     MethodHandle handle = LOOKUP.unreflect(method);
 
-                    eventHandlers
-                        .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
-                        .add(new EventHandlerImpl(subscriber, handle, priority.getValue()));
+                    IEventConsumer<Object> consumer = event -> {
+                        try {                            
+                            handle.bindTo(subscriber).invoke(event);
+                        } catch (Throwable throwable) {
+                            throw new RuntimeException("Error while invoking event handler", throwable);
+                        }
+                    };
+
+                    if (once) {
+                        registerOnce(eventType, subscriber, consumer, priority);
+                    } else {
+                        register(eventType, subscriber, consumer, priority);
+                    }
                 } catch (IllegalAccessException e) {
                     e.printStackTrace();
                 }
             }
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> void register(Class<?> eventType, Object subscriber, IEventConsumer<T> consumer, EventPriority priority) {
+        eventHandlers
+            .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
+            .add(new EventHandlerImpl(subscriber, (IEventConsumer<Object>) consumer, priority.getValue()));
+    }
+
+    public <T> void registerOnce(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
+        registerOnce(eventType, consumer, consumer, priority);
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> void registerOnce(Class<?> eventType, Object subscriber, IEventConsumer<T> consumer, EventPriority priority) {
+        IEventConsumer<T>[] wrapperRef = new IEventConsumer[1];
+
+        IEventConsumer<T> onceWrapper = event -> {
+            consumer.accept(event);
+            unregister(subscriber);
+        };
+
+        wrapperRef[0] = onceWrapper;
+
+        register(eventType, subscriber, (IEventConsumer<Object>) onceWrapper, priority);
     }
 
     public void unregister(Object subscriber) {
@@ -223,23 +247,13 @@ public class EventBus implements IEventBus {
 
     private class EventHandlerImpl implements IEventHandler {
         private final Object subscriber;
-        private final MethodHandle handle;
         private final IEventConsumer<Object> consumer;
         private final int priority;
         private boolean active = true;
 
-        public EventHandlerImpl(Object subscriber, MethodHandle handle, int priority) {
+        public EventHandlerImpl(Object subscriber, IEventConsumer<Object> consumer, int priority) {
             this.subscriber = subscriber;
-            this.handle = handle;
-            this.consumer = null;
-            this.priority = priority;
-        }
-
-        @SuppressWarnings("unchecked")
-        public EventHandlerImpl(IEventConsumer<?> consumer, int priority) {
-            this.subscriber = consumer;
-            this.handle = null;
-            this.consumer = (IEventConsumer<Object>) consumer;
+            this.consumer = consumer;
             this.priority = priority;
         }
 
@@ -260,15 +274,7 @@ public class EventBus implements IEventBus {
         }
 
         public void invoke(Object event) {
-            try {
-                if (consumer != null) {
-                    consumer.accept(event);
-                } else {
-                    handle.bindTo(subscriber).invoke(event);
-                }
-            } catch (Throwable throwable) {
-                throw new RuntimeException("Error while invoking event handler", throwable);
-            }
+            consumer.accept(event);
         } 
     }
 }
