@@ -36,7 +36,9 @@ public class EventBus implements IEventBus {
             for (IEventInterceptor interceptor : interceptors) {
                 try {
                     interceptor.onError(event, throwable);
-                } catch (Throwable ignored) {};
+                } catch (Throwable t) {
+                    t.printStackTrace();
+                };
             }
         }
     }
@@ -172,7 +174,7 @@ public class EventBus implements IEventBus {
         return result;
     }
 
-    public void shutdown() {
+    private void shutdown() {
         executor.shutdown();
     }
 
