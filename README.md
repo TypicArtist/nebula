@@ -1,1 +1,1 @@
-not done yet
+all rights preserved
