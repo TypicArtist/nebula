@@ -1,1 +1,1 @@
-all rights preserved
+All Rights Reserved
