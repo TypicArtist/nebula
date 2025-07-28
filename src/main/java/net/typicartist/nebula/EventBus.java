@@ -40,13 +40,8 @@ public class EventBus implements IEventBus {
     }
     
     @Override
-    public <T> void register(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
-        addHandler(null, eventType, consumer, priority, false);
-    }
-
-    @Override
-    public <T> void registerOnce(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
-        addHandler(null, eventType, consumer, priority, true);
+    public <T> void register(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority, boolean once) {
+        addHandler(null, eventType, consumer, priority, once);
     }
 
     @SuppressWarnings("unchecked")
