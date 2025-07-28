@@ -6,126 +6,106 @@ import java.lang.reflect.Method;
 import java.util.*;
 import java.util.concurrent.*;
 
+import net.typicartist.nebula.consumer.IEventConsumer;
+import net.typicartist.nebula.handler.IEventHandler;
+
 public class EventBus implements IEventBus {
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
     private final Map<Class<?>, Set<IEventHandler>> eventHandlers = new ConcurrentHashMap<>();
-    private final List<IEventInterceptor> interceptors = new CopyOnWriteArrayList<>();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final Map<Class<?>, Set<Class<?>>> hierarchyCache = new ConcurrentHashMap<>();
 
-    public EventBus() {
-        Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown));
-    }
-
-    public <T> Future<?> postAsync(T event) {
-        return executor.submit(() -> post(event));
-    }
-
-    public <T> void postBatch(List<T> events) {
-        for (T event : events) {
-            post(event);
-        }
-    }
-
+    @Override
     public <T> void post(T event) {
-        IInterceptorChain chain = new InterceptorChainImpl(interceptors.iterator());
-        
-        try {
-            chain.process(event);
-        } catch (Throwable throwable) {
-            for (IEventInterceptor interceptor : interceptors) {
-                try {
-                    interceptor.onError(event, throwable);
-                } catch (Throwable t) {
-                    t.printStackTrace();
-                };
+        Set<Class<?>> eventClasses = resolveHierarchy(event.getClass());
+
+        for (Class<?> type : eventClasses) {
+            Set<IEventHandler> handlers = eventHandlers.get(type);
+            if (handlers == null || handlers.isEmpty()) continue;
+
+            PriorityQueue<IEventHandler> queue = new PriorityQueue<>(Comparator.comparingInt(IEventHandler::getPriority).reversed());
+            queue.addAll(handlers);
+
+            while (!queue.isEmpty()) {
+                IEventHandler handler = queue.poll();
+                if (!handler.isActive()) continue;
+
+                handler.invoke(event, () -> handlers.remove(handler));
+
+                if (event instanceof ICancellable cancellable && cancellable.isCancelled()) {
+                    return;
+                }
             }
         }
     }
-
+    
+    @Override
     public <T> void register(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
-        register(eventType, consumer, consumer, priority);
+        addHandler(null, eventType, consumer, priority, false);
     }
 
+    @Override
+    public <T> void registerOnce(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
+        addHandler(null, eventType, consumer, priority, true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> void addHandler(Object subscriber, Class<T> type, IEventConsumer<T> consumer, EventPriority priority, boolean once) {
+        IEventHandler handler = new EventHandlerImpl(subscriber, (IEventConsumer<Object>) consumer, priority.getValue(), once);
+        eventHandlers.computeIfAbsent(type, k -> ConcurrentHashMap.newKeySet()).add(handler);
+    }
+    
+    @SuppressWarnings("unchecked")
+    @Override
     public void register(Object subscriber) {
-        for (Method method : subscriber.getClass().getDeclaredMethods()) {
-            if (method.isAnnotationPresent(Subscriber.class)) {
-                if (method.getReturnType() != void.class || method.getParameterCount() != 1) {
-                    System.err.println("Invalid event handler method: " + method);
-                    continue;
-                }
+        Class<?> clazz = subscriber.getClass();
+        
+        for (Method method : clazz.getDeclaredMethods()) {
+            if (!method.isAnnotationPresent(Subscriber.class)) continue;
+            if (method.getParameterCount() != 1 || method.getReturnType() != void.class) {
+                System.err.println("Invalid subscriber method signature: " + method);
+                continue;
+            }
 
-                Subscriber annotation = method.getAnnotation(Subscriber.class);
-                Class<?> eventType = method.getParameterTypes()[0];
-                EventPriority priority = annotation.priority();
-                boolean once = annotation.once();
+            Class<?> paramType = method.getParameterTypes()[0];
+            Subscriber meta = method.getAnnotation(Subscriber.class);
+            EventPriority priority = meta.priority();
+            boolean once = meta.once();
 
-                method.setAccessible(true);
+            method.setAccessible(true);
 
-                try {
-                    MethodHandle handle = LOOKUP.unreflect(method);
+            try {
+                MethodHandle handle = LOOKUP.unreflect(method).bindTo(subscriber);
 
-                    IEventConsumer<Object> consumer = event -> {
-                        try {                            
-                            handle.bindTo(subscriber).invoke(event);
-                        } catch (Throwable throwable) {
-                            throw new RuntimeException("Error while invoking event handler", throwable);
-                        }
-                    };
-
-                    if (once) {
-                        registerOnce(eventType, subscriber, consumer, priority);
-                    } else {
-                        register(eventType, subscriber, consumer, priority);
+                IEventConsumer<Object> consumer = event -> {
+                    try {
+                        handle.invoke(event);
+                    } catch (Throwable t) {
+                        throw new RuntimeException("Error invoking event handler", t);
                     }
-                } catch (IllegalAccessException e) {
-                    e.printStackTrace();
-                }
+                };
+
+
+                addHandler(subscriber, (Class<Object>) paramType, consumer, priority, once);
+            } catch (IllegalAccessException e) {
+                e.printStackTrace();;
             }
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private <T> void register(Class<?> eventType, Object subscriber, IEventConsumer<T> consumer, EventPriority priority) {
-        eventHandlers
-            .computeIfAbsent(eventType, k -> ConcurrentHashMap.newKeySet())
-            .add(new EventHandlerImpl(subscriber, (IEventConsumer<Object>) consumer, priority.getValue()));
-    }
-
-    public <T> void registerOnce(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority) {
-        registerOnce(eventType, consumer, consumer, priority);
-    }
-
-    @SuppressWarnings("unchecked")
-    private <T> void registerOnce(Class<?> eventType, Object subscriber, IEventConsumer<T> consumer, EventPriority priority) {
-        IEventConsumer<T>[] wrapperRef = new IEventConsumer[1];
-
-        IEventConsumer<T> onceWrapper = event -> {
-            consumer.accept(event);
-            unregister(subscriber);
-        };
-
-        wrapperRef[0] = onceWrapper;
-
-        register(eventType, subscriber, (IEventConsumer<Object>) onceWrapper, priority);
-    }
-
+    @Override
     public void unregister(Object subscriber) {
         for (Set<IEventHandler> handlers : eventHandlers.values()) {
-            Iterator<IEventHandler> iterator = handlers.iterator();
-            while (iterator.hasNext()) {
-                IEventHandler handler = iterator.next();
-                if (handler.getSubscriber() == subscriber) {
-                    iterator.remove();
-                }
-            }
+            handlers.removeIf(h -> h instanceof EventHandlerImpl impl && impl.matchesSubscriber(subscriber));
         }
-    } 
+    }
 
+    @Override
     public void subscribe(Object subscriber) {
         setActive(subscriber, true);
     }
 
+    @Override
     public void unsubscribe(Object subscriber) {
         setActive(subscriber, false);
     }
@@ -140,130 +120,96 @@ public class EventBus implements IEventBus {
         }
     }
 
-    public void addInterceptor(IEventInterceptor interceptor) {
-        interceptors.add(Objects.requireNonNull(interceptor, "interceptor must not be null"));
-    }
-
-    public void removeInterceptor(IEventInterceptor interceptor) {
-        interceptors.remove(Objects.requireNonNull(interceptor, "interceptor must not be null"));
-    }
-
+    @Override
     public <T> boolean hasSubscribers(Class<T> eventType) {
         Set<IEventHandler> handlers = eventHandlers.get(eventType);
         return handlers != null && !handlers.isEmpty();
     }
 
+    @Override
     public <T> int countSubscribers(Class<T> eventType) {
         Set<IEventHandler> handlers = eventHandlers.get(eventType);
         return hasSubscribers(eventType) ? handlers.size() : 0;
     }
 
+    @Override
     public <T> List<Object> getSubscribers(Class<T> eventType) {
         List<Object> result = new ArrayList<>();
-
         Set<IEventHandler> handlers = eventHandlers.get(eventType);
 
-        if (hasSubscribers(eventType)) {
+        if (handlers != null) {
             for (IEventHandler handler : handlers) {
                 if (handler.isActive()) {
                     result.add(handler.getSubscriber());
                 }
             }
-        };
+        }
 
         return result;
     }
 
-    private void shutdown() {
-        executor.shutdown();
+    private Set<Class<?>> resolveHierarchy(Class<?> clazz) {
+        return hierarchyCache.computeIfAbsent(clazz, c -> {
+            Set<Class<?>> result = new LinkedHashSet<>();
+            Queue<Class<?>> queue = new LinkedList<>();
+            queue.add(c);
+            while (!queue.isEmpty()) {
+                Class<?> current = queue.poll();
+                if (current == null || !result.add(current)) continue;
+                queue.add(current.getSuperclass());
+                queue.addAll(Arrays.asList(current.getInterfaces()));
+            }
+            return result;
+        });
     }
 
-    private class InterceptorChainImpl implements IInterceptorChain {
-        private final Iterator<IEventInterceptor> iterator;
-
-        public <T> InterceptorChainImpl(Iterator<IEventInterceptor> iterator) {
-            this.iterator = iterator;
-        }
-
-        public <T> void process(T event) {
-            if (iterator.hasNext()) {
-                IEventInterceptor next = iterator.next();
-                next.intercept(event, this);
-            } else {
-                postToHandlers(event);
-            }
-        }   
-
-
-        public <T> void postToHandlers(T event) {
-            Set<Class<?>> eventClasses = new HashSet<>();
-            Class<?> eventClass = event.getClass();
-
-            while (eventClass != Object.class) {
-                eventClasses.add(eventClass);
-                eventClass = eventClass.getSuperclass();
-            }
-
-            if (eventClass != null) {
-                Collections.addAll(eventClasses, eventClass.getInterfaces());
-            }
-
-            for (Class<?> eventType : eventClasses) {
-                Set<IEventHandler> handlers = eventHandlers.get(eventType);
-                if (hasSubscribers(eventType)) {
-                    PriorityQueue<IEventHandler> queue = new PriorityQueue<>(
-                        Comparator.comparingInt(handler -> -handler.getPriority())
-                    );
-
-                    for (IEventHandler handler : handlers) {
-                        if (handler.isActive()) {
-                            queue.add(handler);
-                        }
-                    }
-
-                    while (!queue.isEmpty()) {
-                        IEventHandler handler = queue.poll();
-                        handler.invoke(event);
-
-                        if (event instanceof ICancellable cancellable && cancellable.isCancelled()) {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private class EventHandlerImpl implements IEventHandler {
-        private final Object subscriber;
+    private static class EventHandlerImpl implements IEventHandler {
         private final IEventConsumer<Object> consumer;
         private final int priority;
+        private final boolean once;
         private boolean active = true;
+        private final Object identity;
 
-        public EventHandlerImpl(Object subscriber, IEventConsumer<Object> consumer, int priority) {
-            this.subscriber = subscriber;
+        public EventHandlerImpl(Object subscriber, IEventConsumer<Object> consumer, int priority, boolean once) {
             this.consumer = consumer;
             this.priority = priority;
+            this.once = once;
+            this.identity = subscriber;
         }
 
-        public Object getSubscriber() {
-            return subscriber;
-        }
-
+        @Override
         public int getPriority() {
             return priority;
         }
 
+        @Override
+        public boolean isOnce() {
+            return once;
+        }
+
+        @Override
         public boolean isActive() {
             return active;
         }
 
+        @Override
         public void setActive(boolean active) {
             this.active = active;
         }
-
-        public void invoke(Object event) {
+        
+        @Override
+        public Object getSubscriber() {
+            return identity;
+        }
+        
+        @Override
+        public void invoke(Object event, Runnable onRemove) {
             consumer.accept(event);
-        } 
+            if (once) onRemove.run();
+        }
+
+        public boolean matchesSubscriber(Object obj) {
+            return identity == obj;
+        }
     }
 }

@@ -3,6 +3,9 @@ package net.typicartist.nebula;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import net.typicartist.nebula.interceptor.IEventInterceptor;
+import net.typicartist.nebula.interceptor.IInterceptorChain;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
