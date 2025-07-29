@@ -9,12 +9,33 @@ import java.util.concurrent.*;
 import net.typicartist.nebula.consumer.IEventConsumer;
 import net.typicartist.nebula.handler.IEventHandler;
 
+/**
+ * A simple and extensible event bus implementation to register, unregister,
+ * and post events to subscribers with prioritized event handling.
+ * <p>
+ * Supports synchronous event posting and prioritized event consumers.
+ * Also supports one-time event listeners and cancellable events.
+ * </p>
+ * <p>
+ * Subscribers can be registered by method annotations using {@link Subscriber}.
+ * Event handlers can be registered manually by providing event type and consumer.
+ */
 public class EventBus implements IEventBus {
     private static final MethodHandles.Lookup LOOKUP = MethodHandles.lookup();
 
     private final Map<Class<?>, Set<IEventHandler>> eventHandlers = new ConcurrentHashMap<>();
     private final Map<Class<?>, Set<Class<?>>> hierarchyCache = new ConcurrentHashMap<>();
 
+    /**
+     * Posts an event synchronously to all registered subscribers of the event's
+     * class or its superclasses/interfaces, respecting the handler priority.
+     * 
+     * If the event implements {@link ICancellable} and is cancelled by any handler,
+     * further handlers will not be invoked.
+     * 
+     * @param <T> the event type
+     * @param event the event instance to post
+     */
     @Override
     public <T> void post(T event) {
         Set<Class<?>> eventClasses = resolveHierarchy(event.getClass());
@@ -39,6 +60,15 @@ public class EventBus implements IEventBus {
         }
     }
     
+    /**
+     * Registers an event consumer for a specific event type with given priority and once-flag.
+     * 
+     * @param <T> the event type
+     * @param eventType the class of the event to listen for
+     * @param consumer the consumer callback to invoke when the event is posted
+     * @param priority the priority of this handler relative to others (higher runs first)
+     * @param once if true, the handler is automatically unregistered after first invocation
+     */
     @Override
     public <T> void register(Class<T> eventType, IEventConsumer<T> consumer, EventPriority priority, boolean once) {
         addHandler(null, eventType, consumer, priority, once);
@@ -50,6 +80,13 @@ public class EventBus implements IEventBus {
         eventHandlers.computeIfAbsent(type, k -> ConcurrentHashMap.newKeySet()).add(handler);
     }
     
+    /**
+     * Registers all methods annotated with {@link Subscriber} in the given subscriber object.
+     * 
+     * Methods must have a single parameter of the event type and return void.
+     * 
+     * @param subscriber the object containing subscriber methods
+     */
     @SuppressWarnings("unchecked")
     @Override
     public void register(Object subscriber) {
@@ -88,6 +125,11 @@ public class EventBus implements IEventBus {
         }
     }
 
+    /**
+     * Unregisters all event handlers associated with the given subscriber object.
+     * 
+     * @param subscriber the subscriber to unregister
+     */
     @Override
     public void unregister(Object subscriber) {
         for (Set<IEventHandler> handlers : eventHandlers.values()) {
@@ -95,11 +137,21 @@ public class EventBus implements IEventBus {
         }
     }
 
+    /**
+     * Marks all event handlers of the subscriber as active to receive events.
+     * 
+     * @param subscriber the subscriber to activate
+     */
     @Override
     public void subscribe(Object subscriber) {
         setActive(subscriber, true);
     }
 
+    /**
+     * Marks all event handlers of the subscriber as inactive to temporarily stop receiving events.
+     * 
+     * @param subscriber the subscriber to deactivate
+     */
     @Override
     public void unsubscribe(Object subscriber) {
         setActive(subscriber, false);
@@ -115,18 +167,40 @@ public class EventBus implements IEventBus {
         }
     }
 
+   
+    /**
+     * Returns whether there are any subscribers registered for the given event type.
+     *
+     * @param <T> the event type
+     * @param eventType the event class
+     * @return true if there are any subscribers, false otherwise
+     */
     @Override
     public <T> boolean hasSubscribers(Class<T> eventType) {
         Set<IEventHandler> handlers = eventHandlers.get(eventType);
         return handlers != null && !handlers.isEmpty();
     }
 
+    /**
+     * Returns the count of subscribers registered for the given event type.
+     * 
+     * @param <T> the event type
+     * @param eventType the event class
+     * @return number of subscribers
+     */
     @Override
     public <T> int countSubscribers(Class<T> eventType) {
         Set<IEventHandler> handlers = eventHandlers.get(eventType);
         return hasSubscribers(eventType) ? handlers.size() : 0;
     }
 
+    /**
+     * Returns a list of subscriber identities currently active for the given event type.
+     * 
+     * @param <T> the event type
+     * @param eventType the event class
+     * @return list of active subscriber objects
+     */
     @Override
     public <T> List<Object> getSubscribers(Class<T> eventType) {
         List<Object> result = new ArrayList<>();
@@ -143,6 +217,12 @@ public class EventBus implements IEventBus {
         return result;
     }
 
+    /**
+     * Resolves and caches the full class hierarchy (superclasses and interfaces)
+     * for the given event class, to enable posting events to all relevant handlers.
+     * @param clazz the event class
+     * @return set of classes and interfaces in the hierarchy
+     */
     private Set<Class<?>> resolveHierarchy(Class<?> clazz) {
         return hierarchyCache.computeIfAbsent(clazz, c -> {
             Set<Class<?>> result = new LinkedHashSet<>();
@@ -158,6 +238,10 @@ public class EventBus implements IEventBus {
         });
     }
 
+    /**
+     * Internal implementation of an event handler wrapping an event consumer.
+     * Supports activation state and one-time invocation semantics.
+     */
     private static class EventHandlerImpl implements IEventHandler {
         private final IEventConsumer<Object> consumer;
         private final int priority;

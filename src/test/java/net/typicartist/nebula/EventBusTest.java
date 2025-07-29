@@ -83,10 +83,10 @@ public class EventBusTest {
 
     @Test
     public void testEventIsCancelled() {
-        bus.register(CancellableTestEvent.class, e -> e.cancel(), EventPriority.NORMAL);
+        bus.register(CancellableTestEvent.class, e -> e.cancel(), EventPriority.NORMAL, false);
 
         final boolean[] called = {false};
-        bus.register(CancellableTestEvent.class, e -> called[0] = true, EventPriority.LOW);
+        bus.register(CancellableTestEvent.class, e -> called[0] = true, EventPriority.LOW, false);
 
         bus.post(new CancellableTestEvent("should be cancelled"));
 
@@ -96,7 +96,7 @@ public class EventBusTest {
     @Test
     public void testEventConsumerReceivesEvent() {
         final String[] result = {null};
-        bus.register(TestEvent.class, e -> result[0] = e.getMessage(), EventPriority.NORMAL);
+        bus.register(TestEvent.class, e -> result[0] = e.getMessage(), EventPriority.NORMAL, false);
 
         bus.post(new TestEvent("via consumer"));
 
@@ -109,7 +109,7 @@ public class EventBusTest {
         final String[] consumerResult = {null};
 
         bus.register(subscriber);
-        bus.register(TestEvent.class, e -> consumerResult[0] = "consumer: " + e.getMessage(), EventPriority.LOW);
+        bus.register(TestEvent.class, e -> consumerResult[0] = "consumer: " + e.getMessage(), EventPriority.LOW, false);
 
         bus.post(new TestEvent("together"));
 
@@ -121,11 +121,11 @@ public class EventBusTest {
     public void testPriorityOrder() {
         List<String> callOrder = new ArrayList<>();
 
-        bus.register(TestEvent.class, e -> callOrder.add("LOWEST"), EventPriority.LOWEST);
-        bus.register(TestEvent.class, e -> callOrder.add("LOW"), EventPriority.LOW);
-        bus.register(TestEvent.class, e -> callOrder.add("NORMAL"), EventPriority.NORMAL);
-        bus.register(TestEvent.class, e -> callOrder.add("HIGH"), EventPriority.HIGH);
-        bus.register(TestEvent.class, e -> callOrder.add("HIGHEST"), EventPriority.HIGHEST);
+        bus.register(TestEvent.class, e -> callOrder.add("LOWEST"), EventPriority.LOWEST, false);
+        bus.register(TestEvent.class, e -> callOrder.add("LOW"), EventPriority.LOW, false);
+        bus.register(TestEvent.class, e -> callOrder.add("NORMAL"), EventPriority.NORMAL, false);
+        bus.register(TestEvent.class, e -> callOrder.add("HIGH"), EventPriority.HIGH, false);
+        bus.register(TestEvent.class, e -> callOrder.add("HIGHEST"), EventPriority.HIGHEST, false);
 
         bus.post(new TestEvent("priority"));
 
@@ -147,7 +147,7 @@ public class EventBusTest {
 
     @Test
     void testOnceConsumer() {
-        bus.registerOnce(TestEvent.class, e -> {}, EventPriority.NORMAL);
+        bus.register(TestEvent.class, e -> {}, EventPriority.NORMAL, true);
 
         assertEquals(true, bus.hasSubscribers(TestEvent.class));
         bus.post(new TestEvent("once event handle"));
