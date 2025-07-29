@@ -41,7 +41,7 @@ public class EventBus implements IEventBus {
         Set<Class<?>> eventClasses = resolveHierarchy(event.getClass());
 
         for (Class<?> type : eventClasses) {
-            Set<IEventHandler> handlers = new HashSet<>(eventHandlers.get(type));
+            Set<IEventHandler> handlers = eventHandlers.get(type);
             if (handlers == null || handlers.isEmpty()) continue;
 
             PriorityQueue<IEventHandler> queue = new PriorityQueue<>(Comparator.comparingInt(IEventHandler::getPriority).reversed());
