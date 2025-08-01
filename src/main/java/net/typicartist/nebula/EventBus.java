@@ -44,18 +44,17 @@ public class EventBus implements IEventBus {
             Set<IEventHandler> handlers = eventHandlers.get(type);
             if (handlers == null || handlers.isEmpty()) continue;
 
-            PriorityQueue<IEventHandler> queue = new PriorityQueue<>(Comparator.comparingInt(IEventHandler::getPriority).reversed());
-            queue.addAll(handlers);
-
-            while (!queue.isEmpty()) {
-                IEventHandler handler = queue.poll();
+            for (IEventHandler handler : handlers) {
                 if (!handler.isActive()) continue;
 
-                handler.invoke(event, () -> handlers.remove(handler));
+                handler.invoke(event, () -> {
+                    if (handler.isOnce()) {
+                        Set<IEventHandler> set = eventHandlers.get(type);
+                        if (set != null) set.remove(handler);
+                    }
+                });
 
-                if (event instanceof ICancellable cancellable && cancellable.isCancelled()) {
-                    return;
-                }
+                if (event instanceof ICancellable cancellable &&  cancellable.isCancelled()) return;
             }
         }
     }
@@ -77,7 +76,7 @@ public class EventBus implements IEventBus {
     @SuppressWarnings("unchecked")
     private <T> void addHandler(Object subscriber, Class<T> type, IEventConsumer<T> consumer, EventPriority priority, boolean once) {
         IEventHandler handler = new EventHandlerImpl(subscriber, (IEventConsumer<Object>) consumer, priority.getValue(), once);
-        eventHandlers.computeIfAbsent(type, k -> ConcurrentHashMap.newKeySet()).add(handler);
+        eventHandlers.computeIfAbsent(type, k -> new ConcurrentSkipListSet<>()).add(handler);
     }
     
     /**
@@ -166,7 +165,6 @@ public class EventBus implements IEventBus {
             }
         }
     }
-
    
     /**
      * Returns whether there are any subscribers registered for the given event type.

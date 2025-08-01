@@ -3,7 +3,7 @@ plugins {
     id 'maven-publish'
 }
 
-version = '0.0.1'
+version = '1.0.0'
 group = 'net.typicartist'
 
 repositories {
@@ -34,6 +34,13 @@ publishing {
     }
 
     repositories {
-
+        maven {
+            url = "http://localhost:8081/repository/maven-releases/"
+            allowInsecureProtocol = true
+            credentials {
+                username = project.findProperty("nexusUsername") ?: ""
+                password = project.findProperty("nexusPassword") ?: ""
+            }
+        }
     }
 }
