@@ -240,7 +240,7 @@ public class EventBus implements IEventBus {
      * Internal implementation of an event handler wrapping an event consumer.
      * Supports activation state and one-time invocation semantics.
      */
-    private static class EventHandlerImpl implements IEventHandler {
+    private static class EventHandlerImpl implements IEventHandler, Comparable<EventHandlerImpl> {
         private final IEventConsumer<Object> consumer;
         private final int priority;
         private final boolean once;
@@ -287,6 +287,15 @@ public class EventBus implements IEventBus {
 
         public boolean matchesSubscriber(Object obj) {
             return identity == obj;
+        }
+
+        @Override
+        public int compareTo(EventHandlerImpl other) {
+            int cmp = Integer.compare(other.priority, this.priority);
+            if (cmp == 0) {
+                return Integer.compare(System.identityHashCode(this.identity), System.identityHashCode(other.identity));
+            }
+            return cmp;
         }
     }
 }
